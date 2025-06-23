@@ -4,7 +4,7 @@
     "handle_duplicates": "rename",
     "categories": {
         "Images": {
-            "folder_path": "",
+            "folder_path": "C:\\Users\\PC\\Pictures\\Imagenes",
             "enabled": true,
             "extensions": [
                 "jpg",

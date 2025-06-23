@@ -34,14 +34,14 @@ class FileOrganizerHandler(FileSystemEventHandler):
         """Triggered when a file is created."""
         if not event.is_directory:
             logging.info(f"File creation detected: {event.src_path}")
-            time.sleep(1)  # Wait a bit for the file to finish writing
+            # The actual waiting for file readiness is now handled in organize_file
             self.organizer.organize_file(event.src_path)
     
     def on_moved(self, event):
         """Triggered when a file is moved."""
         if not event.is_directory:
             logging.info(f"File moved: {event.src_path} to {event.dest_path}")
-            time.sleep(1) # Wait a bit
+            # The actual waiting for file readiness is now handled in organize_file
             self.organizer.organize_file(event.dest_path)
 
 class FileOrganizer:
@@ -244,6 +244,55 @@ class FileOrganizer:
             
             logging.info(f"Renaming duplicate file: {src_path.name} to {dest_path.name}")
             return dest_path
+
+    def _is_file_ready(self, file_path, stability_period=2, check_interval=0.5, max_wait_time=30):
+        """
+        Checks if a file has finished being written by monitoring its size over time.
+        
+        Args:
+            file_path (Path): The path to the file.
+            stability_period (int): Duration in seconds the file size must remain stable.
+            check_interval (float): Time in seconds between size checks.
+            max_wait_time (int): Maximum total time to wait for the file to become ready.
+        
+        Returns:
+            bool: True if the file is deemed ready, False otherwise.
+        """
+        if not file_path.exists():
+            logging.warning(f"File not found during readiness check: {file_path}")
+            return False
+
+        last_size = -1
+        stable_time = 0
+        total_wait_time = 0
+
+        logging.info(f"Checking readiness for file: {file_path.name}")
+
+        while total_wait_time < max_wait_time:
+            try:
+                current_size = file_path.stat().st_size
+                if current_size == last_size:
+                    stable_time += check_interval
+                    logging.debug(f"File {file_path.name} size stable for {stable_time:.1f}s.")
+                    if stable_time >= stability_period:
+                        logging.info(f"File {file_path.name} is ready.")
+                        return True
+                else:
+                    stable_time = 0  # Reset stability if size changed
+                    last_size = current_size
+                    logging.debug(f"File {file_path.name} size changed to {current_size} bytes. Resetting stability.")
+            except FileNotFoundError:
+                logging.warning(f"File {file_path.name} disappeared during readiness check.")
+                return False
+            except Exception as e:
+                logging.error(f"Error checking file readiness for {file_path.name}: {e}")
+                return False
+
+            time.sleep(check_interval)
+            total_wait_time += check_interval
+        
+        logging.warning(f"File {file_path.name} did not become ready within {max_wait_time}s. Proceeding anyway.")
+        return False # Or True, depending on desired behavior for timeout. Returning False might prevent moving partial files.
     
     def organize_file(self, file_path):
         """Organizes a single file."""
@@ -265,6 +314,11 @@ class FileOrganizer:
                 pass # Continue only if the file is in the downloads folder
             else:
                 logging.info(f"File '{file_path.name}' is not in the configured downloads folder. Skipping.")
+                return False
+
+            # *** NEW: Wait for file to be ready before proceeding ***
+            if not self._is_file_ready(file_path):
+                logging.warning(f"File '{file_path.name}' was not ready for organization. Skipping for now.")
                 return False
 
             category = self.get_file_category(str(file_path))
