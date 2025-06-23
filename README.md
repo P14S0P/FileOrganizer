@@ -69,26 +69,6 @@ Move the Shortcut: Drag the shortcut you created in step 2 into the "Startup" fo
 
 The next time you start your PC, the File Organizer will launch automatically and minimize to the system tray.
 
-Project Structure
-file_organizer_standalone.py: The main application script.
-
-organizer_config.json: Configuration file that stores user preferences.
-
-dist/: Folder containing the compiled executable (file_organizer_standalone.exe).
-
-Contributions
-Contributions are welcome! If you wish to improve this application, please:
-
-Fork the repository.
-
-Create a new branch (git checkout -b feature/AmazingFeature).
-
-Make your changes and commit (git commit -m 'Add some AmazingFeature').
-
-Push to the branch (git push origin feature/AmazingFeature).
-
-Open a Pull Request.
-
 License
 This project is licensed under the MIT License. See the LICENSE file for more details.
 
