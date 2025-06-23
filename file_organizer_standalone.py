@@ -245,14 +245,14 @@ class FileOrganizer:
             logging.info(f"Renaming duplicate file: {src_path.name} to {dest_path.name}")
             return dest_path
 
-    def _is_file_ready(self, file_path, stability_period=2, check_interval=0.5, max_wait_time=30):
+    def _is_file_ready(self, file_path, stability_period=3, check_interval=1, max_wait_time=60):
         """
-        Checks if a file has finished being written by monitoring its size over time.
+        Checks if a file has finished being written and is not locked by another process.
         
         Args:
             file_path (Path): The path to the file.
             stability_period (int): Duration in seconds the file size must remain stable.
-            check_interval (float): Time in seconds between size checks.
+            check_interval (float): Time in seconds between size/lock checks.
             max_wait_time (int): Maximum total time to wait for the file to become ready.
         
         Returns:
@@ -270,29 +270,46 @@ class FileOrganizer:
 
         while total_wait_time < max_wait_time:
             try:
+                # 1. Check file size stability
                 current_size = file_path.stat().st_size
                 if current_size == last_size:
                     stable_time += check_interval
                     logging.debug(f"File {file_path.name} size stable for {stable_time:.1f}s.")
-                    if stable_time >= stability_period:
-                        logging.info(f"File {file_path.name} is ready.")
-                        return True
                 else:
                     stable_time = 0  # Reset stability if size changed
                     last_size = current_size
                     logging.debug(f"File {file_path.name} size changed to {current_size} bytes. Resetting stability.")
+
+                # 2. Try to open file in exclusive mode (check for locks)
+                # If this fails, the file is likely still in use/locked.
+                try:
+                    with open(file_path, 'ab') as f: # Open in append binary mode to not truncate, but still test write lock
+                        pass # File is accessible
+                    file_is_unlocked = True
+                except (OSError, IOError) as e:
+                    file_is_unlocked = False
+                    logging.debug(f"File {file_path.name} is still locked: {e}")
+
+                # If both conditions are met, the file is ready
+                if stable_time >= stability_period and file_is_unlocked:
+                    logging.info(f"File {file_path.name} is ready (size stable and unlocked).")
+                    return True
+
             except FileNotFoundError:
                 logging.warning(f"File {file_path.name} disappeared during readiness check.")
-                return False
+                return False # File disappeared, cannot proceed
             except Exception as e:
-                logging.error(f"Error checking file readiness for {file_path.name}: {e}")
-                return False
+                logging.error(f"General error during readiness check for {file_path.name}: {e}")
+                # Don't return False immediately, allow retries if it's a transient error
+                pass 
 
             time.sleep(check_interval)
             total_wait_time += check_interval
         
-        logging.warning(f"File {file_path.name} did not become ready within {max_wait_time}s. Proceeding anyway.")
-        return False # Or True, depending on desired behavior for timeout. Returning False might prevent moving partial files.
+        logging.warning(f"File {file_path.name} did not become ready within {max_wait_time}s. Proceeding anyway, but might fail.")
+        # If max_wait_time is reached, assume it might be an issue or a very slow process.
+        # Returning False here prevents attempting to move a potentially incomplete/locked file.
+        return False
     
     def organize_file(self, file_path):
         """Organizes a single file."""
@@ -317,8 +334,9 @@ class FileOrganizer:
                 return False
 
             # *** NEW: Wait for file to be ready before proceeding ***
+            logging.info(f"Initiating readiness check for {file_path.name}...")
             if not self._is_file_ready(file_path):
-                logging.warning(f"File '{file_path.name}' was not ready for organization. Skipping for now.")
+                logging.warning(f"File '{file_path.name}' was not ready for organization after waiting. Skipping for now.")
                 return False
 
             category = self.get_file_category(str(file_path))
